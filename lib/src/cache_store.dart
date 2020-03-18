@@ -6,6 +6,7 @@ import 'package:flutter_cache_manager/src/storage/cache_info_repository.dart';
 import 'package:flutter_cache_manager/src/storage/cache_object.dart';
 import 'package:flutter_cache_manager/src/file_info.dart';
 import 'package:flutter_cache_manager/src/storage/cache_object_provider.dart';
+import 'package:flutter_cache_manager/src/util.dart';
 import 'package:path/path.dart' as p;
 import 'package:pedantic/pedantic.dart';
 import 'package:sqflite/sqflite.dart';
@@ -31,8 +32,10 @@ class CacheStore {
   DateTime lastCleanupRun = DateTime.now();
   Timer _scheduledCleanup;
 
-  CacheStore(Future<f.Directory> basedir, this.storeKey, this._capacity, this._maxAge,
-    {Future<CacheInfoRepository> cacheRepoProvider, this.cleanupRunMinInterval = const Duration(seconds: 10)}) {
+  CacheStore(
+      Future<f.Directory> basedir, this.storeKey, this._capacity, this._maxAge,
+      {Future<CacheInfoRepository> cacheRepoProvider,
+      this.cleanupRunMinInterval = const Duration(seconds: 10)}) {
     fileDir = basedir.then((dir) => _fileDir = dir);
     _cacheInfoRepository = cacheRepoProvider ?? _getObjectProvider();
   }
@@ -57,15 +60,17 @@ class CacheStore {
   }
 
   Future<void> putFile(CacheObject cacheObject) async {
-    _memCache[cacheObject.url] = cacheObject;
+    final rootUrl = Utils.absolutePath(cacheObject.url);
+    _memCache[rootUrl] = cacheObject;
     await _updateCacheDataInDatabase(cacheObject);
   }
 
   Future<CacheObject> retrieveCacheData(String url) {
-    if (_memCache.containsKey(url)) {
-      return Future.value(_memCache[url]);
+    final rootUrl = Utils.absolutePath(url);
+    if (_memCache.containsKey(rootUrl)) {
+      return Future.value(_memCache[rootUrl]);
     }
-    if (!_futureCache.containsKey(url)) {
+    if (!_futureCache.containsKey(rootUrl)) {
       final completer = Completer<CacheObject>();
       _getCacheDataFromDatabase(url).then((cacheObject) async {
         if (cacheObject != null && !await _fileExists(cacheObject)) {
@@ -75,19 +80,20 @@ class CacheStore {
         }
         completer.complete(cacheObject);
 
-        _memCache[url] = cacheObject;
-        _futureCache[url] = null;
+        _memCache[rootUrl] = cacheObject;
+        _futureCache[rootUrl] = null;
       });
-      _futureCache[url] = completer.future;
+      _futureCache[rootUrl] = completer.future;
     }
-    return _futureCache[url];
+    return _futureCache[rootUrl];
   }
 
   FileInfo getFileFromMemory(String url) {
-    if (_memCache[url] == null || _fileDir == null) {
+    final rootUrl = Utils.absolutePath(url);
+    if (_memCache[rootUrl] == null || _fileDir == null) {
       return null;
     }
-    final cacheObject = _memCache[url];
+    final cacheObject = _memCache[rootUrl];
     final file = _fileDir.childFile(cacheObject.relativePath);
     return FileInfo(file, FileSource.Cache, cacheObject.validTill, url);
   }
@@ -161,7 +167,8 @@ class CacheStore {
     await provider.deleteAll(toRemove);
   }
 
-  Future<void> _removeCachedFile(CacheObject cacheObject, List<int> toRemove) async {
+  Future<void> _removeCachedFile(
+      CacheObject cacheObject, List<int> toRemove) async {
     if (!toRemove.contains(cacheObject.id)) {
       toRemove.add(cacheObject.id);
       if (_memCache.containsKey(cacheObject.url)) {
